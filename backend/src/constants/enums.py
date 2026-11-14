@@ -8,3 +8,6 @@ class JobStatus(str, Enum):
     running = 'running'
     completed = 'completed'
     failed = 'failed'
+class AuthorizationStatus(str, Enum):
+    active = 'active'
+    revoked = 'revoked'

@@ -3,8 +3,14 @@
 密度聚类的真实业务分析小型项目。完整模拟客户、痛点、上下游、算法公式与一天工作剧本见 [BUSINESS.md](BUSINESS.md)。
 
 ## 模块与业务流程
-数据接入（JSON/CSV、字段验证、批次指纹）→ 参数化分析（异步 Python worker）→ 结果复核（指标、图形、明细、解释、批准）→ 定时分发（本地收件箱、CSV/JSON、SHA256）；另有业务总览和审计轨迹。
-三个贯穿全栈的实体：Dataset 数据批次、Job 分析任务、Report 分发计划；辅助 User、Audit、Delivery。
+数据接入（JSON/CSV、字段验证、批次指纹）→ 参数化分析（异步 Python worker）→ 结果复核（指标、图形、明细、解释、批准与撤回）→ 定时分发（本地收件箱、CSV/JSON、SHA256）；另有业务总览和审计轨迹。
+三个贯穿全栈的实体：Dataset 数据批次、Job 分析任务、Report 分发计划；辅助 User、Audit、Delivery、Authorization。
+
+### 使用授权的批准、撤回与封存
+- 每次批准生成一份 Authorization（按任务序号递增）；同一任务同时至多一份有效授权，重复批准被拒绝。
+- 负责人可注明原因撤回有效许可。撤回事务完成为界：关联分发计划立即停用并封存（不可重启），既有简报全部封存——记录、时间、指纹保留可查证，但 CSV/JSON 下载一律拒绝并写审计；正在排队的到期生成不再发布新简报。
+- 中断恢复后 worker 启动对账（reconcile），重试撤回会幂等补封，受影响简报始终全部封存。
+- 再次批准形成新授权序号：旧授权、旧简报继续封存，旧计划不可重启；新计划只能挂接新授权。页面「结果复核」可追溯历次批准、撤回原因及受影响的计划与简报。
 
 ## 快速启动
 ```bash
@@ -18,7 +24,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 ## 演示账号与权限
 |账号|密码|真实权限|
 |---|---|---|
-|admin@demo.local|Demo123!|接入、执行、批准、分发、暂停、读取与下载|
+|admin@demo.local|Demo123!|接入、执行、批准、注明原因撤回、分发、暂停、读取与下载|
 |analyst@demo.local|Demo123!|接入、执行、读取与下载；不能批准或安排分发|
 |viewer@demo.local|Demo123!|只读与下载|
 
@@ -33,7 +39,7 @@ Role 枚举：admin/analyst/viewer；JobStatus：queued/running/completed/failed
 
 ## 环境变量与 Docker
 COMPOSE_PROJECT_NAME=rail-density；FRONTEND_PORT=18210；BACKEND_PORT=19210；DB_PORT=17710；DB_PASSWORD、JWT_SECRET 见 .env.example；SEED_DEMO 默认 true。共享命名产物卷供后端下载与 worker 写入，数据库/Redis 各持久卷。
-恰好五服务均有健康检查。Redis 队列加 SQL 排队状态兜底；worker 按 next_run 生成本地收件箱文件。周期 60 秒至 30 天。分发结果为批准分析的固定快照；若需新数据重新计算并建立新计划。当前不连接邮件或企业聊天。
+恰好五服务均有健康检查。Redis 队列加 SQL 排队状态兜底；worker 按 next_run 生成本地收件箱文件。周期 60 秒至 30 天。分发结果为授权分析的固定快照，计划绑定创建时的授权；许可撤回后计划封存不可重启、简报禁止下载，重新批准须另建新计划。若需新数据重新计算并建立新计划。当前不连接邮件或企业聊天。
 错误响应、请求编号、Redis 每 IP 每分钟 240 次限流、JWT 和数据库操作审计。演示密钥与密码仅供本机模拟；生产部署前配置独立密钥与账号。
 
 ## 数据与验收

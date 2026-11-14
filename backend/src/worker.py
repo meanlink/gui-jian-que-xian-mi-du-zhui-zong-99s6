@@ -8,6 +8,7 @@ from src.models import Job, Dataset, Report
 from src.services.business import analyze
 from src.services.reports import deliver
 from src.services.audit import record
+from src.services.authorizations import reconcile
 logging.basicConfig(level=logging.INFO)
 def execute(job_id):
     with Session() as db:
@@ -30,7 +31,8 @@ def tick():
         queued=list(db.scalars(select(Job.id).where(Job.status=='queued').limit(3)))
     for job_id in queued:execute(job_id)
     with Session() as db:
-        for r in db.scalars(select(Report).where(Report.enabled==True,Report.next_run<=time.time())):
+        # 已封存（许可撤回）的计划不再产生任何简报
+        for r in db.scalars(select(Report).where(Report.enabled==True,Report.sealed==False,Report.next_run<=time.time())):
             d=deliver(db,r)
             if d:record(db,'worker','report.delivered',{'id':r.id,'delivery':d.id})
         db.commit()
@@ -40,6 +42,9 @@ def main():
     with Session() as db:
         for j in db.scalars(select(Job).where(Job.status=='running')):
             j.status='queued';record(db,'worker','job.recovered',{'id':j.id})
+        # 中断恢复后重试：撤回已完成但漏封的简报仍须全部封存
+        sealed=reconcile(db)
+        if sealed:record(db,'worker','authorization.reconciled',{'sealed_deliveries':sealed})
         db.commit()
     while True:
         Path('/tmp/heartbeat').touch()
